@@ -1,0 +1,20 @@
+{
+    "name": "image-to-pdf-converter",
+    "version": "1.0.0",
+    "description": "Image to PDF converter with Vercel deployment",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "vercel dev"
+    },
+    "dependencies": {
+        "express": "^4.17.1",
+        "multer": "^1.4.2",
+        "cors": "^2.8.5",
+        "nodemailer": "^6.6.3",
+        "dotenv": "^10.0.0"
+    },
+    "devDependencies": {
+        "vercel": "^24.0.0"
+    }
+} 

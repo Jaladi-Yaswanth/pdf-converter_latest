@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image to PDF Converter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="file"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        input[type="email"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .radio-group {
+            margin: 15px 0;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #response {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+            border: 1px solid #d6e9c6;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+            border: 1px solid #ebccd1;
+        }
+        .loading {
+            display: none;
+            margin-top: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Image to PDF Converter</h1>
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="image">Select Image:</label>
+                <input type="file" id="image" name="image" accept=".jpg,.jpeg,.png,.gif" required>
+            </div>
+
+            <div class="radio-group">
+                <label>Delivery Method:</label>
+                <div>
+                    <input type="radio" id="download" name="deliveryMethod" value="download" checked>
+                    <label for="download">Download PDF</label>
+                </div>
+                <div>
+                    <input type="radio" id="email" name="deliveryMethod" value="email">
+                    <label for="email">Send to Email</label>
+                </div>
+            </div>
+
+            <div class="form-group" id="emailGroup" style="display: none;">
+                <label for="email">Email Address:</label>
+                <input type="email" id="email" name="email">
+            </div>
+
+            <button type="submit">Convert to PDF</button>
+        </form>
+
+        <div id="loading" class="loading">
+            Converting... Please wait...
+        </div>
+
+        <div id="response"></div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const imageFile = document.getElementById('image').files[0];
+            const deliveryMethod = document.querySelector('input[name="deliveryMethod"]:checked').value;
+            
+            if (!imageFile) {
+                showResponse('Please select an image file.', 'error');
+                return;
+            }
+
+            formData.append('image', imageFile);
+            formData.append('deliveryMethod', deliveryMethod);
+
+            if (deliveryMethod === 'email') {
+                const email = document.getElementById('email').value;
+                if (!email) {
+                    showResponse('Please enter an email address.', 'error');
+                    return;
+                }
+                formData.append('email', email);
+            }
+
+            const loading = document.getElementById('loading');
+            const response = document.getElementById('response');
+            loading.style.display = 'block';
+            response.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/convert', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (deliveryMethod === 'email') {
+                    const data = await res.json();
+                    showResponse(data.message, data.success ? 'success' : 'error');
+                } else {
+                    if (res.ok) {
+                        const blob = await res.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'converted.pdf';
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                        showResponse('PDF downloaded successfully!', 'success');
+                    } else {
+                        const data = await res.json();
+                        showResponse(data.error || 'An error occurred', 'error');
+                    }
+                }
+            } catch (error) {
+                showResponse('An error occurred while processing your request.', 'error');
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+
+        // Show/hide email input based on delivery method
+        document.querySelectorAll('input[name="deliveryMethod"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                const emailGroup = document.getElementById('emailGroup');
+                emailGroup.style.display = e.target.value === 'email' ? 'block' : 'none';
+            });
+        });
+
+        function showResponse(message, type) {
+            const response = document.getElementById('response');
+            response.textContent = message;
+            response.className = type;
+            response.style.display = 'block';
+        }
+    </script>
+</body>
+</html> 
