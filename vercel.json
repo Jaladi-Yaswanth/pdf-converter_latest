@@ -19,5 +19,6 @@
             "src": "/(.*)",
             "dest": "/public/$1"
         }
-    ]
+    ],
+    "skewProtection": true
 } 
