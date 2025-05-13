@@ -313,7 +313,7 @@
             response.style.display = 'none';
 
             try {
-                const res = await fetch('/convert', {
+                const res = await fetch('api/index', {
                     method: 'POST',
                     body: formData
                 });
