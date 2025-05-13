@@ -1,20 +1,73 @@
-const express = require('express');
-const multer = require('multer');
-const cors = require('cors');
-const path = require('path');
-const fs = require('fs');
-const nodemailer = require('nodemailer');
-const { exec } = require('child_process');
+require("dotenv").config();
+const express = require("express");
+const multer = require("multer");
+const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
+const nodemailer = require("nodemailer");
+const { exec } = require("child_process");
 
 const app = express();
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Configure multer for memory storage (Vercel doesn't support disk storage)
+// Create necessary directories
+['uploads', 'converted'].forEach(dir => {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir);
+    }
+});
+
+// Static file serving
+app.use(express.static(__dirname));
+app.use("/converted", express.static(path.join(__dirname, "converted")));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// Serve laytest.html at the root URL
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'laytest.html'));
+});
+
+// Configure email transporter
+const emailTransporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+        user: process.env.MAIL,
+        pass: process.env.PASS,
+    }
+});
+
+// Configure multer for file upload
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, 'uploads/');
+    },
+    filename: (req, file, cb) => {
+        // Ensure filename is URL-safe
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const safeFilename = uniqueSuffix + path.extname(file.originalname).toLowerCase();
+        cb(null, safeFilename);
+    }
+});
+/*
+const storage=multer.diskStorage({
+    destination:(req,file,cb)=>{
+        cb(null,'/uploads');
+
+    }
+    ,filename:(req,file,cb)=>{
+        const unique=Date.now()+'-'+Math.round(Math.random()*1E9);
+        const safefilename=unique+path.extname(file.originalname).toLowerCase();
+        cb(null,safefilename);
+    }
+
+});*/
+
 const upload = multer({
-    storage: multer.memoryStorage(),
+    storage: storage,
     fileFilter: (req, file, cb) => {
         const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
         if (allowedTypes.includes(file.mimetype)) {
@@ -25,15 +78,6 @@ const upload = multer({
     },
     limits: {
         fileSize: 5 * 1024 * 1024 // 5MB limit
-    }
-});
-
-// Configure email transporter
-const emailTransporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-        user: process.env.MAIL,
-        pass: process.env.PASS,
     }
 });
 
@@ -54,7 +98,7 @@ const executeCommand = (command) => {
 };
 
 // Helper function to send email
-const sendEmail = async (userEmail, pdfBuffer, filename) => {
+const sendEmail = async (userEmail, pdfPath, filename) => {
     const emailOptions = {
         from: process.env.MAIL,
         to: userEmail,
@@ -62,7 +106,7 @@ const sendEmail = async (userEmail, pdfBuffer, filename) => {
         text: "Please find your converted PDF file attached.",
         attachments: [{
             filename: filename,
-            content: pdfBuffer
+            path: pdfPath
         }]
     };
 
@@ -75,81 +119,114 @@ const sendEmail = async (userEmail, pdfBuffer, filename) => {
     }
 };
 
-// Main route for file processing
-module.exports = async (req, res) => {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
+// Add this route before the main /convert route
+app.get('/converted/:filename', (req, res) => {
+    const filename = req.params.filename;
+    const filePath = path.join(__dirname, 'converted', filename);
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({
+            success: false,
+            error: 'File not found'
+        });
     }
 
+    // Set headers for direct download
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/pdf');
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+});
+
+// Main route for file processing
+app.post("/convert", upload.single("image"), async (req, res) => {
+    console.log('Received conversion request');
     try {
-        // Handle file upload
-        upload.single('image')(req, res, async (err) => {
-            if (err) {
+        if (!req.file) {
+            console.log('No file uploaded');
+            return res.status(400).json({ 
+                success: false,
+                error: "No file uploaded" 
+            });
+        }
+
+        console.log('File received:', req.file.filename);
+        const convertedFilename = `${Date.now()}-converted.pdf`;
+        const outputPath = path.join(__dirname, "converted", convertedFilename);
+
+        console.log('Converting file...');
+        // Convert image to PDF
+        await executeCommand(`python converter.py "${req.file.path}" "${outputPath}"`);
+        console.log('Conversion completed');
+
+        // Clean up the uploaded file
+        fs.unlinkSync(req.file.path);
+        console.log('Cleaned up uploaded file');
+
+        if (req.body.deliveryMethod === 'email') {
+            if (!req.body.email) {
                 return res.status(400).json({ 
                     success: false,
-                    error: err.message 
+                    error: "Email address is required for email delivery" 
                 });
             }
 
-            if (!req.file) {
-                return res.status(400).json({ 
-                    success: false,
-                    error: "No file uploaded" 
-                });
-            }
+            console.log('Sending email...');
+            await sendEmail(req.body.email, outputPath, convertedFilename);
+            console.log('Email sent successfully');
+            
+            res.json({
+                success: true,
+                message: "PDF has been sent to your email",
+                method: "email"
+            });
+        } else {
+            console.log('Preparing download response');
+            // Set headers for direct download
+            res.setHeader('Content-Disposition', `attachment; filename="${convertedFilename}"`);
+            res.setHeader('Content-Type', 'application/pdf');
+            res.json({
+                success: true,
+                message: "PDF ready for download",
+                method: "download",
+                downloadUrl: `/converted/${convertedFilename}`,
+                filename: convertedFilename
+            });
+        }
 
-            // Create a temporary file
-            const tempInputPath = `/tmp/${Date.now()}-input${path.extname(req.file.originalname)}`;
-            const tempOutputPath = `/tmp/${Date.now()}-output.pdf`;
-
-            // Write the uploaded file to temp directory
-            fs.writeFileSync(tempInputPath, req.file.buffer);
-
-            try {
-                // Convert image to PDF
-                await executeCommand(`python converter.py "${tempInputPath}" "${tempOutputPath}"`);
-                
-                // Read the converted PDF
-                const pdfBuffer = fs.readFileSync(tempOutputPath);
-
-                if (req.body.deliveryMethod === 'email') {
-                    if (!req.body.email) {
-                        return res.status(400).json({ 
-                            success: false,
-                            error: "Email address is required for email delivery" 
-                        });
-                    }
-
-                    await sendEmail(req.body.email, pdfBuffer, 'converted.pdf');
-                    
-                    res.json({
-                        success: true,
-                        message: "PDF has been sent to your email",
-                        method: "email"
-                    });
-                } else {
-                    res.setHeader('Content-Type', 'application/pdf');
-                    res.setHeader('Content-Disposition', 'attachment; filename=converted.pdf');
-                    res.send(pdfBuffer);
-                }
-
-                // Clean up temporary files
-                fs.unlinkSync(tempInputPath);
-                fs.unlinkSync(tempOutputPath);
-
-            } catch (error) {
-                console.error("Error during processing:", error);
-                res.status(500).json({
-                    success: false,
-                    error: error.message || "An error occurred during processing"
-                });
-            }
-        });
     } catch (error) {
-        console.error("Error:", error);
+        console.error("Error during processing:", error);
         res.status(500).json({
             success: false,
-            error: error.message || "An unexpected error occurred"
+            error: error.message || "An error occurred during processing"
         });
     }
-}; 
+});
+
+// Error handling middleware
+app.use((error, req, res, next) => {
+    console.error('Global error handler:', error);
+    if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({
+                success: false,
+                error: 'File size is too large. Maximum size is 5MB'
+            });
+        }
+    }
+    res.status(500).json({
+        success: false,
+        error: error.message || "An unexpected error occurred"
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server directory: ${__dirname}`);
+    console.log(`Uploads directory: ${path.join(__dirname, 'uploads')}`);
+    console.log(`Converted directory: ${path.join(__dirname, 'converted')}`);
+}); 
